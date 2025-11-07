@@ -20,7 +20,7 @@
                 <div class="header-right">
                     <div class="user-menu">
                         <div class="language-selector">
-                            <select id="languageSelect" onchange="changeLanguage(this.value)">
+                            <select id="languageSelect">
                                 <option value="en">English</option>
                                 <option value="es">Español</option>
                             </select>
@@ -28,14 +28,14 @@
                         <div class="user-info">
                             <span id="userName">User</span>
                             <div class="user-dropdown">
-                                <button class="btn btn-secondary" onclick="toggleUserMenu()">
+                                <button class="btn btn-secondary" id="userMenuBtn">
                                     <i class="fas fa-user"></i> <i class="fas fa-chevron-down"></i>
                                 </button>
                                 <div class="dropdown-menu" id="userDropdown">
                                     <a href="/admin" class="dropdown-item admin-only" id="adminPanelLink">
                                         <i class="fas fa-cog"></i> <span id="adminPanelText">Admin Panel</span>
                                     </a>
-                                    <a href="#" onclick="logout()" class="dropdown-item">
+                                    <a href="#" class="dropdown-item" id="logoutLink">
                                         <i class="fas fa-sign-out-alt"></i> <span id="logoutText">Logout</span>
                                     </a>
                                 </div>
@@ -182,22 +182,60 @@
             }
 
             updateUI() {
-                document.getElementById('serverTitle').textContent = this.t('serverName');
-                document.getElementById('breadcrumbHome').textContent = this.t('home');
-                document.getElementById('backText').textContent = this.t('back');
-                document.getElementById('refreshText').textContent = this.t('refresh');
-                document.getElementById('loadingText').textContent = this.t('loading');
-                document.getElementById('footerText').textContent = this.t('footerText');
-                document.getElementById('adminPanelText').textContent = this.t('adminPanel');
-                document.getElementById('logoutText').textContent = this.t('logout');
-                document.getElementById('searchInput').placeholder = this.t('search');
+                // Actualizar solo los elementos que existen
+                const elements = {
+                    'serverTitle': this.t('serverName'),
+                    'breadcrumbHome': this.t('home'),
+                    'backText': this.t('back'),
+                    'refreshText': this.t('refresh'),
+                    'loadingText': this.t('loading'),
+                    'footerText': this.t('footerText'),
+                    'adminPanelText': this.t('adminPanel'),
+                    'logoutText': this.t('logout')
+                };
+                
+                for (const [id, text] of Object.entries(elements)) {
+                    const element = document.getElementById(id);
+                    if (element) {
+                        element.textContent = text;
+                    }
+                }
+                
+                const searchInput = document.getElementById('searchInput');
+                if (searchInput) {
+                    searchInput.placeholder = this.t('search');
+                }
+                
                 document.title = this.t('serverName');
+                
+                // Actualizar el selector de idioma
+                const languageSelect = document.getElementById('languageSelect');
+                if (languageSelect && this.currentLanguage) {
+                    languageSelect.value = this.currentLanguage;
+                }
             }
 
             setupEventListeners() {
                 document.getElementById('backBtn').addEventListener('click', () => this.goBack());
                 document.getElementById('refreshBtn').addEventListener('click', () => this.refresh());
                 document.getElementById('searchInput').addEventListener('input', (e) => this.filterFiles(e.target.value));
+                
+                // Language selector
+                document.getElementById('languageSelect').addEventListener('change', (e) => {
+                    changeLanguage(e.target.value);
+                });
+                
+                // User menu toggle
+                document.getElementById('userMenuBtn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    toggleUserMenu();
+                });
+                
+                // Logout button
+                document.getElementById('logoutLink').addEventListener('click', (e) => {
+                    e.preventDefault();
+                    logout();
+                });
             }
 
             async loadDirectory(path) {
@@ -265,7 +303,7 @@
                             </div>
                         </div>
                         <div class="file-actions">
-                            ${!item.isDirectory ? `<button class="btn btn-primary btn-sm" onclick="fileBrowser.downloadFile('${item.path}')">
+                            ${!item.isDirectory ? `<button class="btn btn-primary btn-sm download-btn" data-file-path="${item.path}">
                                 <i class="fas fa-download"></i> ${this.t('download')}
                             </button>` : ''}
                         </div>
@@ -311,14 +349,14 @@
                 const breadcrumb = document.getElementById('breadcrumb');
                 const pathParts = this.currentPath ? this.currentPath.split('/').filter(p => p) : [];
                 
-                let html = `<span class="breadcrumb-item" onclick="fileBrowser.loadDirectory('')"><i class="fas fa-home"></i> ${this.t('home')}</span>`;
+                let html = `<span class="breadcrumb-item" data-breadcrumb-path=""><i class="fas fa-home"></i> ${this.t('home')}</span>`;
                 
                 let currentPath = '';
                 pathParts.forEach((part, index) => {
                     currentPath += '/' + part;
                     const isLast = index === pathParts.length - 1;
                     html += `<span class="breadcrumb-separator">/</span>`;
-                    html += `<span class="breadcrumb-item ${isLast ? 'active' : ''}" ${!isLast ? `onclick="fileBrowser.loadDirectory('${currentPath}')"` : ''}>${part}</span>`;
+                    html += `<span class="breadcrumb-item ${isLast ? 'active' : ''}" ${!isLast ? `data-breadcrumb-path="${currentPath}"` : ''}>${part}</span>`;
                 });
                 
                 breadcrumb.innerHTML = html;
@@ -341,11 +379,37 @@
                 this.loadDirectory(this.currentPath);
             }
 
-            filterFiles(searchTerm) {
-                const filteredItems = this.currentItems.filter(item =>
-                    item.name.toLowerCase().includes(searchTerm.toLowerCase())
-                );
+            async filterFiles(searchTerm) {
+                const normalizedSearch = searchTerm.toLowerCase().trim();
+                
+                if (!normalizedSearch) {
+                    // Si no hay búsqueda, mostrar todos los items
+                    this.renderFileList(this.currentItems);
+                    return;
+                }
+                
+                // Primero buscar en la carpeta actual
+                const filteredItems = this.currentItems.filter(item => {
+                    const itemName = item.name.toLowerCase();
+                    return itemName.includes(normalizedSearch);
+                });
+                
                 this.renderFileList(filteredItems);
+                
+                // Mostrar mensaje si no hay resultados
+                if (filteredItems.length === 0) {
+                    const fileList = document.getElementById('fileList');
+                    fileList.innerHTML = `
+                        <div class="empty-folder">
+                            <i class="fas fa-search"></i>
+                            <p>No files found matching "${searchTerm}" in current folder</p>
+                            <small style="margin-top: 10px; display: block;">
+                                <i class="fas fa-info-circle"></i> Search is limited to current folder. 
+                                Navigate to parent folders to search in other locations.
+                            </small>
+                        </div>
+                    `;
+                }
             }
 
             downloadFile(filePath) {
@@ -403,6 +467,8 @@
 
         async function changeLanguage(language) {
             try {
+                console.log('Changing language to:', language);
+                
                 const response = await fetch('/api/language', {
                     method: 'PUT',
                     headers: {
@@ -413,10 +479,18 @@
                 });
                 
                 const result = await response.json();
+                console.log('Language change result:', result);
                 
                 if (result.success) {
                     fileBrowser.translations = result.translations;
-                    fileBrowser.currentLanguage = language;
+                    fileBrowser.currentLanguage = result.language;
+                    
+                    // Actualizar el selector visual
+                    const languageSelect = document.getElementById('languageSelect');
+                    if (languageSelect) {
+                        languageSelect.value = result.language;
+                    }
+                    
                     fileBrowser.updateUI();
                     fileBrowser.updateBreadcrumb();
                     if (fileBrowser.currentItems.length > 0) {
@@ -424,9 +498,11 @@
                     }
                 } else {
                     console.error('Language change failed:', result.message);
+                    alert('Failed to change language: ' + result.message);
                 }
             } catch (error) {
                 console.error('Language change error:', error);
+                alert('Error changing language');
             }
         }
 
@@ -437,6 +513,24 @@
             
             if (userDropdown && !userDropdown.contains(event.target)) {
                 dropdown.classList.remove('show');
+            }
+        });
+
+        // Event delegation para breadcrumb navigation
+        document.addEventListener('click', (e) => {
+            const breadcrumbItem = e.target.closest('.breadcrumb-item[data-breadcrumb-path]');
+            if (breadcrumbItem) {
+                const path = breadcrumbItem.dataset.breadcrumbPath;
+                fileBrowser.loadDirectory(path);
+            }
+        });
+
+        // Event delegation para botones de descarga
+        document.addEventListener('click', (e) => {
+            const downloadBtn = e.target.closest('.download-btn');
+            if (downloadBtn) {
+                const filePath = downloadBtn.dataset.filePath;
+                fileBrowser.downloadFile(filePath);
             }
         });
 

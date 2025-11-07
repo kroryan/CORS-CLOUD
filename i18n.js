@@ -203,6 +203,10 @@ class I18n {
         const lang = language || this.currentLanguage;
         return translations[lang] || translations[this.defaultLanguage];
     }
+    
+    getTranslationsForLanguage(language) {
+        return translations[language] || translations[this.defaultLanguage];
+    }
 
     // Helper method for Express.js
     middleware() {

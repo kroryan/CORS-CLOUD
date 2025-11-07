@@ -121,8 +121,18 @@ const attachUser = async (req, res, next) => {
 };
 
 // Rate limiting middleware (simple implementation)
-const createRateLimiter = (windowMs = 15 * 60 * 1000, max = 100) => {
+const createRateLimiter = (windowMs = 15 * 60 * 1000, max = 1000) => {
     const clients = new Map();
+    
+    // Limpiar clientes antiguos cada 5 minutos
+    setInterval(() => {
+        const now = Date.now();
+        for (const [clientId, client] of clients.entries()) {
+            if (now > client.resetTime) {
+                clients.delete(clientId);
+            }
+        }
+    }, 5 * 60 * 1000);
     
     return (req, res, next) => {
         const clientId = req.ip;
@@ -146,7 +156,7 @@ const createRateLimiter = (windowMs = 15 * 60 * 1000, max = 100) => {
             logAuth('RATE_LIMIT_EXCEEDED', req.session?.username || 'anonymous', req.ip, false);
             return res.status(429).json({
                 success: false,
-                message: 'Too many requests'
+                message: 'Too many requests. Please wait a few minutes.'
             });
         }
         
@@ -155,13 +165,13 @@ const createRateLimiter = (windowMs = 15 * 60 * 1000, max = 100) => {
 };
 
 // Login rate limiter (more restrictive)
-const loginLimiter = createRateLimiter(15 * 60 * 1000, 5); // 5 attempts per 15 minutes
+const loginLimiter = createRateLimiter(15 * 60 * 1000, 10); // 10 attempts per 15 minutes
 
 // General rate limiter
-const generalLimiter = createRateLimiter(15 * 60 * 1000, 100); // 100 requests per 15 minutes
+const generalLimiter = createRateLimiter(15 * 60 * 1000, 1000); // 1000 requests per 15 minutes
 
 // File access rate limiter
-const fileLimiter = createRateLimiter(60 * 1000, 50); // 50 file requests per minute
+const fileLimiter = createRateLimiter(60 * 1000, 500); // 500 file requests per minute
 
 module.exports = {
     requireAuth,

@@ -24,8 +24,10 @@ app.use(helmet({
             defaultSrc: ["'self'"],
             styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"],
             scriptSrc: ["'self'", "'unsafe-inline'"],
+            scriptSrcAttr: ["'unsafe-inline'"],
             imgSrc: ["'self'", "data:", "https:"],
-            fontSrc: ["'self'", "https://cdnjs.cloudflare.com"]
+            fontSrc: ["'self'", "https://cdnjs.cloudflare.com"],
+            connectSrc: ["'self'"]
         }
     }
 }));
@@ -391,24 +393,31 @@ app.put('/api/language', (req, res) => {
     try {
         const { language } = req.body;
         
-        if (i18n.setLanguage(language)) {
-            if (req.session) {
-                req.session.language = language;
-            }
-            res.json({ 
-                success: true, 
-                message: req.t('languageChanged'),
-                translations: req.getTranslations()
-            });
-        } else {
-            res.status(400).json({ 
+        // Validar que el idioma es válido
+        if (!['en', 'es'].includes(language)) {
+            return res.status(400).json({ 
                 success: false, 
-                message: 'Invalid language' 
+                message: 'Invalid language. Supported: en, es' 
             });
         }
+        
+        // Cambiar idioma de la sesión
+        if (req.session) {
+            req.session.language = language;
+        }
+        
+        // Obtener las traducciones en el nuevo idioma
+        const translations = i18n.getTranslationsForLanguage(language);
+        
+        res.json({ 
+            success: true, 
+            message: 'Language changed successfully',
+            language: language,
+            translations: translations
+        });
     } catch (error) {
         logError(error, 'Language change error', req.user?.username, req.ip);
-        res.status(500).json({ success: false, message: req.t('internalError') });
+        res.status(500).json({ success: false, message: 'Internal error' });
     }
 });
 
