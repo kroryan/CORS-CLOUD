@@ -97,13 +97,37 @@ function isValidPath(requestedPath) {
     return fullPath.startsWith(NAS_ROOT) && !fullPath.startsWith(corsPath);
 }
 
-// Setup and authentication routes
-app.get('/setup', checkSetup, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'setup.html'));
+// Setup and authentication routes (accessible without checkSetup middleware)
+app.get('/setup', async (req, res) => {
+    try {
+        const isSetupCompleted = await database.isSetupCompleted();
+        const hasAdmin = await database.hasAdminUser();
+        
+        if (isSetupCompleted && hasAdmin) {
+            return res.redirect('/');
+        }
+        
+        res.sendFile(path.join(__dirname, 'public', 'setup.html'));
+    } catch (error) {
+        logError(error, 'Setup page error');
+        res.sendFile(path.join(__dirname, 'public', 'setup.html'));
+    }
 });
 
-app.get('/login', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+app.get('/login', async (req, res) => {
+    try {
+        const isSetupCompleted = await database.isSetupCompleted();
+        const hasAdmin = await database.hasAdminUser();
+        
+        if (!isSetupCompleted || !hasAdmin) {
+            return res.redirect('/setup');
+        }
+        
+        res.sendFile(path.join(__dirname, 'public', 'login.html'));
+    } catch (error) {
+        logError(error, 'Login page error');
+        res.redirect('/setup');
+    }
 });
 
 app.get('/admin', requireAdmin, (req, res) => {

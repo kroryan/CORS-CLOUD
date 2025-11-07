@@ -94,7 +94,9 @@
 
             async checkAuthentication() {
                 try {
-                    const response = await fetch('/api/auth/status');
+                    const response = await fetch('/api/auth/status', {
+                        credentials: 'include'
+                    });
                     const data = await response.json();
                     
                     if (!data.authenticated) {
@@ -113,17 +115,43 @@
 
             async loadTranslations() {
                 try {
-                    const response = await fetch('/api/translations');
+                    const response = await fetch('/api/translations', {
+                        credentials: 'include'
+                    });
                     const data = await response.json();
                     
                     if (data.success) {
                         this.translations = data.translations;
                         this.currentLanguage = data.currentLanguage || 'en';
                         this.updateUI();
+                    } else {
+                        // Use default English translations if server fails
+                        console.warn('Using default translations');
+                        this.translations = this.getDefaultTranslations();
+                        this.updateUI();
                     }
                 } catch (error) {
                     console.error('Failed to load translations:', error);
+                    // Use default English translations as fallback
+                    this.translations = this.getDefaultTranslations();
+                    this.updateUI();
                 }
+            }
+
+            getDefaultTranslations() {
+                return {
+                    serverName: 'NAS File Browser',
+                    home: 'Home',
+                    back: 'Back',
+                    refresh: 'Refresh',
+                    search: 'Search files...',
+                    loading: 'Loading...',
+                    download: 'Download',
+                    emptyFolder: 'This folder is empty',
+                    footerText: 'Server running on port 7070 | Tailscale compatible',
+                    adminPanel: 'Admin Panel',
+                    logout: 'Logout'
+                };
             }
 
             t(key) {
@@ -131,16 +159,26 @@
             }
 
             updateUserInfo() {
-                document.getElementById('userName').textContent = this.currentUser.username;
+                const userNameElement = document.getElementById('userName');
+                if (userNameElement && this.currentUser) {
+                    userNameElement.textContent = this.currentUser.username;
+                }
                 
                 // Show/hide admin options
                 const adminElements = document.querySelectorAll('.admin-only');
                 adminElements.forEach(el => {
-                    el.style.display = this.currentUser.role === 'admin' ? 'block' : 'none';
+                    if (this.currentUser && this.currentUser.role === 'admin') {
+                        el.style.display = 'block';
+                    } else {
+                        el.style.display = 'none';
+                    }
                 });
                 
                 // Set language selector
-                document.getElementById('languageSelect').value = this.currentLanguage;
+                const langSelect = document.getElementById('languageSelect');
+                if (langSelect) {
+                    langSelect.value = this.currentLanguage;
+                }
             }
 
             updateUI() {
@@ -166,7 +204,9 @@
                 this.showLoading(true);
                 
                 try {
-                    const response = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
+                    const response = await fetch(`/api/browse?path=${encodeURIComponent(path)}`, {
+                        credentials: 'include'
+                    });
                     
                     if (!response.ok) {
                         throw new Error(`Error ${response.status}: ${response.statusText}`);
@@ -339,12 +379,15 @@
         // Global functions for UI interactions
         function toggleUserMenu() {
             const dropdown = document.getElementById('userDropdown');
-            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+            dropdown.classList.toggle('show');
         }
 
         async function logout() {
             try {
-                const response = await fetch('/api/auth/logout', { method: 'POST' });
+                const response = await fetch('/api/auth/logout', { 
+                    method: 'POST',
+                    credentials: 'include'
+                });
                 const result = await response.json();
                 
                 if (result.success) {
@@ -365,6 +408,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
+                    credentials: 'include',
                     body: JSON.stringify({ language })
                 });
                 
@@ -374,7 +418,10 @@
                     fileBrowser.translations = result.translations;
                     fileBrowser.currentLanguage = language;
                     fileBrowser.updateUI();
-                    fileBrowser.renderFileList(fileBrowser.currentItems); // Re-render to update text
+                    fileBrowser.updateBreadcrumb();
+                    if (fileBrowser.currentItems.length > 0) {
+                        fileBrowser.renderFileList(fileBrowser.currentItems);
+                    }
                 } else {
                     console.error('Language change failed:', result.message);
                 }
@@ -385,11 +432,11 @@
 
         // Close user menu when clicking outside
         document.addEventListener('click', (event) => {
-            const userMenu = document.querySelector('.user-dropdown');
+            const userDropdown = document.querySelector('.user-dropdown');
             const dropdown = document.getElementById('userDropdown');
             
-            if (!userMenu.contains(event.target)) {
-                dropdown.style.display = 'none';
+            if (userDropdown && !userDropdown.contains(event.target)) {
+                dropdown.classList.remove('show');
             }
         });
 

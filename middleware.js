@@ -6,11 +6,16 @@ const requireAuth = (req, res, next) => {
     if (req.session && req.session.userId) {
         next();
     } else {
-        res.status(401).json({ 
-            success: false, 
-            message: 'Authentication required',
-            redirect: '/login'
-        });
+        // For API requests, return JSON
+        if (req.path.startsWith('/api/')) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Authentication required',
+                redirect: '/login'
+            });
+        }
+        // For page requests, redirect to login
+        res.redirect('/login');
     }
 };
 

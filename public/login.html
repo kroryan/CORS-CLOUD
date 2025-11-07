@@ -166,7 +166,9 @@
         // Load translations
         async function loadTranslations() {
             try {
-                const response = await fetch('/api/translations');
+                const response = await fetch('/api/translations', {
+                    credentials: 'include'
+                });
                 const data = await response.json();
                 if (data.success) {
                     translations = data.translations;
@@ -175,6 +177,16 @@
                 }
             } catch (error) {
                 console.error('Failed to load translations:', error);
+                // Use defaults
+                translations = {
+                    serverName: 'NAS File Browser',
+                    loginRequired: 'Please sign in to continue',
+                    username: 'Username',
+                    password: 'Password',
+                    loginButton: 'Sign In',
+                    login: 'Login'
+                };
+                updateUI();
             }
         }
 

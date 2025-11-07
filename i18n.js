@@ -206,14 +206,22 @@ class I18n {
 
     // Helper method for Express.js
     middleware() {
-        return (req, res, next) => {
-            // Set language from query parameter, session, or header
-            let language = req.query.lang || 
-                          req.session?.language || 
+        return async (req, res, next) => {
+            // Set language from session, query parameter, or header
+            let language = req.session?.language || 
+                          req.query.lang || 
                           req.headers['accept-language']?.split(',')[0]?.split('-')[0];
             
+            // If no language found or invalid, use default
             if (!language || !translations[language]) {
-                language = this.defaultLanguage;
+                // Try to get from database setting
+                try {
+                    const database = require('./database');
+                    const defaultLang = await database.getSetting('default_language');
+                    language = defaultLang || this.defaultLanguage;
+                } catch (error) {
+                    language = this.defaultLanguage;
+                }
             }
             
             this.setLanguage(language);
