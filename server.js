@@ -51,7 +51,11 @@ app.use(session({
 
 // Rate limiting
 app.use('/api/auth', loginLimiter);
-app.use('/api', generalLimiter);
+// Bypass general limiter for search endpoint; apply a milder limiter if needed later
+app.use((req, res, next) => {
+    if (req.path.startsWith('/api/search')) return next();
+    return generalLimiter(req, res, next);
+});
 app.use('/download', fileLimiter);
 
 // I18n middleware
@@ -418,6 +422,62 @@ app.put('/api/language', (req, res) => {
     } catch (error) {
         logError(error, 'Language change error', req.user?.username, req.ip);
         res.status(500).json({ success: false, message: 'Internal error' });
+    }
+});
+
+// Recursive search endpoint
+app.get('/api/search', requireAuth, async (req, res) => {
+    const term = (req.query.term || '').toLowerCase().trim();
+    const startPath = (req.query.path || '').trim();
+    if (!term) return res.json({ success: true, items: [] });
+
+    const MAX_DEPTH = 5;
+    const MAX_RESULTS = 250;
+    const results = [];
+    const visited = new Set();
+    const rootDir = NAS_ROOT;
+    const startAbs = path.join(rootDir, (startPath || '').replace(/^\//, ''));
+
+    function excluded(p) {
+        // Exclude the CORS project directory itself
+    return p.startsWith(path.join(rootDir, 'CORS'));
+    }
+
+    async function walk(current, depth) {
+        if (depth > MAX_DEPTH || results.length >= MAX_RESULTS) return;
+        let list;
+        try { list = await fs.promises.readdir(current, { withFileTypes: true }); } catch { return; }
+        for (const entry of list) {
+            if (results.length >= MAX_RESULTS) break;
+            const full = path.join(current, entry.name);
+            if (excluded(full)) continue;
+            const rel = '/' + path.relative(rootDir, full).replace(/\\/g, '/');
+            const lowerName = entry.name.toLowerCase();
+            if (lowerName.includes(term)) {
+                let stats; try { stats = await fs.promises.stat(full); } catch { stats = null; }
+                results.push({
+                    name: entry.name,
+                    path: rel,
+                    isDirectory: entry.isDirectory(),
+                    size: stats?.size || 0,
+                    modified: stats?.mtimeMs || Date.now()
+                });
+            }
+            if (entry.isDirectory()) {
+                if (!visited.has(full)) {
+                    visited.add(full);
+                    await walk(full, depth + 1);
+                }
+            }
+        }
+    }
+
+    try {
+        await walk(startAbs, 0);
+        res.json({ success: true, items: results, limited: results.length >= MAX_RESULTS, term });
+    } catch (err) {
+        logError(err, 'Recursive search error', req.user?.username, req.ip);
+        res.status(500).json({ success: false, message: 'Search failed' });
     }
 });
 

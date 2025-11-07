@@ -174,11 +174,7 @@
                     }
                 });
                 
-                // Set language selector
-                const langSelect = document.getElementById('languageSelect');
-                if (langSelect) {
-                    langSelect.value = this.currentLanguage;
-                }
+                // Language select is updated in updateUI()
             }
 
             updateUI() {
@@ -210,8 +206,11 @@
                 
                 // Actualizar el selector de idioma
                 const languageSelect = document.getElementById('languageSelect');
-                if (languageSelect && this.currentLanguage) {
-                    languageSelect.value = this.currentLanguage;
+                if (languageSelect) {
+                    const lang = this.currentLanguage || 'en';
+                    if (languageSelect.value !== lang) {
+                        languageSelect.value = lang;
+                    }
                 }
             }
 
@@ -221,8 +220,13 @@
                 document.getElementById('searchInput').addEventListener('input', (e) => this.filterFiles(e.target.value));
                 
                 // Language selector
-                document.getElementById('languageSelect').addEventListener('change', (e) => {
-                    changeLanguage(e.target.value);
+                const langEl = document.getElementById('languageSelect');
+                langEl.addEventListener('change', (e) => {
+                    const value = e.target.value === 'es' ? 'es' : 'en';
+                    // Evitar cambios repetidos si ya está seleccionado
+                    if (this.currentLanguage !== value) {
+                        changeLanguage(value);
+                    }
                 });
                 
                 // User menu toggle
@@ -380,35 +384,46 @@
             }
 
             async filterFiles(searchTerm) {
-                const normalizedSearch = searchTerm.toLowerCase().trim();
-                
-                if (!normalizedSearch) {
-                    // Si no hay búsqueda, mostrar todos los items
+                const raw = (searchTerm || '');
+                const term = raw.toLowerCase().trim();
+                if (!term) {
                     this.renderFileList(this.currentItems);
                     return;
                 }
-                
-                // Primero buscar en la carpeta actual
-                const filteredItems = this.currentItems.filter(item => {
-                    const itemName = item.name.toLowerCase();
-                    return itemName.includes(normalizedSearch);
-                });
-                
-                this.renderFileList(filteredItems);
-                
-                // Mostrar mensaje si no hay resultados
-                if (filteredItems.length === 0) {
-                    const fileList = document.getElementById('fileList');
-                    fileList.innerHTML = `
-                        <div class="empty-folder">
-                            <i class="fas fa-search"></i>
-                            <p>No files found matching "${searchTerm}" in current folder</p>
-                            <small style="margin-top: 10px; display: block;">
-                                <i class="fas fa-info-circle"></i> Search is limited to current folder. 
-                                Navigate to parent folders to search in other locations.
-                            </small>
-                        </div>
-                    `;
+                // Local quick filter
+                const local = this.currentItems.filter(i => i.name.toLowerCase().includes(term));
+                const threshold = 3;
+                if (term.length < threshold) {
+                    this.renderFileList(local);
+                    if (local.length === 0) {
+                        document.getElementById('fileList').innerHTML = `<div class="empty-folder"><i class=\"fas fa-search\"></i><p>No files found matching "${raw}" in this folder</p><small>Type at least ${threshold} characters for global search.</small></div>`;
+                    }
+                    return;
+                }
+                const fileList = document.getElementById('fileList');
+                fileList.innerHTML = `<div class=\"loading\" style=\"display:flex\"><i class=\"fas fa-spinner fa-spin\"></i> Searching "${raw}"...</div>`;
+                try {
+                    const resp = await fetch(`/api/search?term=${encodeURIComponent(raw)}&path=${encodeURIComponent(this.currentPath)}`, { credentials: 'include' });
+                    if (!resp.ok) throw new Error('Search request failed');
+                    const data = await resp.json();
+                    if (!data.success) throw new Error(data.message || 'Search failed');
+                    const items = data.items || [];
+                    if (items.length === 0) {
+                        fileList.innerHTML = `<div class=\"empty-folder\"><i class=\"fas fa-search\"></i><p>No files found matching \"${raw}\"</p><small>${data.limited ? 'Result limit reached.' : 'Try another term.'}</small></div>`;
+                        return;
+                    }
+                    this.renderFileList(items);
+                    const summary = document.createElement('div');
+                    summary.className = 'search-summary';
+                    summary.style.cssText = 'margin:0 0 0.75rem 0;padding:0.5rem 0.75rem;background:#f8f9fa;border:1px solid #e9ecef;border-radius:6px;font-size:0.8rem;display:flex;justify-content:space-between;align-items:center;';
+                    summary.innerHTML = `<span><i class=\"fas fa-search\"></i> ${items.length} result(s) for \"${raw}\"${data.limited ? ' (limited)' : ''}</span><button class=\"btn btn-sm btn-secondary\" id=\"clearSearchBtn\"><i class=\"fas fa-times\"></i> Clear</button>`;
+                    fileList.prepend(summary);
+                    document.getElementById('clearSearchBtn').addEventListener('click', () => {
+                        document.getElementById('searchInput').value = '';
+                        this.renderFileList(this.currentItems);
+                    });
+                } catch (err) {
+                    fileList.innerHTML = `<div class=\"error-message\"><i class=\"fas fa-exclamation-triangle\"></i><p>Search error: ${err.message}</p></div>`;
                 }
             }
 
