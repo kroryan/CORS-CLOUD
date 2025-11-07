@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NAS File Browser</title>
+    <link rel="stylesheet" href="/assets/style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <div class="header-left">
+                    <h1><i class="fas fa-server"></i> <span id="serverTitle">NAS File Browser</span></h1>
+                    <div class="breadcrumb" id="breadcrumb">
+                        <span class="breadcrumb-item active"><i class="fas fa-home"></i> <span id="breadcrumbHome">Home</span></span>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <div class="user-menu">
+                        <div class="language-selector">
+                            <select id="languageSelect" onchange="changeLanguage(this.value)">
+                                <option value="en">English</option>
+                                <option value="es">Español</option>
+                            </select>
+                        </div>
+                        <div class="user-info">
+                            <span id="userName">User</span>
+                            <div class="user-dropdown">
+                                <button class="btn btn-secondary" onclick="toggleUserMenu()">
+                                    <i class="fas fa-user"></i> <i class="fas fa-chevron-down"></i>
+                                </button>
+                                <div class="dropdown-menu" id="userDropdown">
+                                    <a href="/admin" class="dropdown-item admin-only" id="adminPanelLink">
+                                        <i class="fas fa-cog"></i> <span id="adminPanelText">Admin Panel</span>
+                                    </a>
+                                    <a href="#" onclick="logout()" class="dropdown-item">
+                                        <i class="fas fa-sign-out-alt"></i> <span id="logoutText">Logout</span>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="toolbar">
+            <button id="backBtn" class="btn btn-secondary" disabled>
+                <i class="fas fa-arrow-left"></i> <span id="backText">Back</span>
+            </button>
+            <button id="refreshBtn" class="btn btn-secondary">
+                <i class="fas fa-sync-alt"></i> <span id="refreshText">Refresh</span>
+            </button>
+            <div class="search-container">
+                <input type="text" id="searchInput" placeholder="Search files...">
+                <i class="fas fa-search"></i>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <i class="fas fa-spinner fa-spin"></i> <span id="loadingText">Loading...</span>
+        </div>
+
+        <div class="file-browser" id="fileBrowser">
+            <div class="file-list" id="fileList">
+                <!-- Los archivos se cargarán aquí dinámicamente -->
+            </div>
+        </div>
+
+        <footer class="footer">
+            <p><i class="fas fa-info-circle"></i> <span id="footerText">Server running on port 7070 | Tailscale compatible</span></p>
+        </footer>
+    </div>
+
+    <script>
+        class FileBrowser {
+            constructor() {
+                this.currentPath = '';
+                this.currentItems = [];
+                this.currentUser = null;
+                this.translations = {};
+                this.currentLanguage = 'en';
+                this.init();
+            }
+
+            async init() {
+                await this.checkAuthentication();
+                await this.loadTranslations();
+                this.setupEventListeners();
+                this.loadDirectory('');
+            }
+
+            async checkAuthentication() {
+                try {
+                    const response = await fetch('/api/auth/status');
+                    const data = await response.json();
+                    
+                    if (!data.authenticated) {
+                        window.location.href = '/login';
+                        return;
+                    }
+                    
+                    this.currentUser = data.user;
+                    this.updateUserInfo();
+                    
+                } catch (error) {
+                    console.error('Authentication check failed:', error);
+                    window.location.href = '/login';
+                }
+            }
+
+            async loadTranslations() {
+                try {
+                    const response = await fetch('/api/translations');
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        this.translations = data.translations;
+                        this.currentLanguage = data.currentLanguage || 'en';
+                        this.updateUI();
+                    }
+                } catch (error) {
+                    console.error('Failed to load translations:', error);
+                }
+            }
+
+            t(key) {
+                return this.translations[key] || key;
+            }
+
+            updateUserInfo() {
+                document.getElementById('userName').textContent = this.currentUser.username;
+                
+                // Show/hide admin options
+                const adminElements = document.querySelectorAll('.admin-only');
+                adminElements.forEach(el => {
+                    el.style.display = this.currentUser.role === 'admin' ? 'block' : 'none';
+                });
+                
+                // Set language selector
+                document.getElementById('languageSelect').value = this.currentLanguage;
+            }
+
+            updateUI() {
+                document.getElementById('serverTitle').textContent = this.t('serverName');
+                document.getElementById('breadcrumbHome').textContent = this.t('home');
+                document.getElementById('backText').textContent = this.t('back');
+                document.getElementById('refreshText').textContent = this.t('refresh');
+                document.getElementById('loadingText').textContent = this.t('loading');
+                document.getElementById('footerText').textContent = this.t('footerText');
+                document.getElementById('adminPanelText').textContent = this.t('adminPanel');
+                document.getElementById('logoutText').textContent = this.t('logout');
+                document.getElementById('searchInput').placeholder = this.t('search');
+                document.title = this.t('serverName');
+            }
+
+            setupEventListeners() {
+                document.getElementById('backBtn').addEventListener('click', () => this.goBack());
+                document.getElementById('refreshBtn').addEventListener('click', () => this.refresh());
+                document.getElementById('searchInput').addEventListener('input', (e) => this.filterFiles(e.target.value));
+            }
+
+            async loadDirectory(path) {
+                this.showLoading(true);
+                
+                try {
+                    const response = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`Error ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    const data = await response.json();
+                    this.currentPath = data.currentPath;
+                    this.currentItems = data.items;
+                    
+                    this.updateBreadcrumb();
+                    this.renderFileList(data.items);
+                    this.updateBackButton(data.parentPath);
+                    
+                } catch (error) {
+                    console.error('Error loading directory:', error);
+                    this.showError('Error cargando el directorio: ' + error.message);
+                } finally {
+                    this.showLoading(false);
+                }
+            }
+
+            renderFileList(items) {
+                const fileList = document.getElementById('fileList');
+                
+                if (items.length === 0) {
+                    fileList.innerHTML = `<div class="empty-folder"><i class="fas fa-folder-open"></i><p>${this.t('emptyFolder')}</p></div>`;
+                    return;
+                }
+                
+                fileList.innerHTML = items.map(item => this.createFileItem(item)).join('');
+            }
+
+            createFileItem(item) {
+                const icon = this.getFileIcon(item);
+                const sizeInfo = item.isDirectory ? '' : `<span class="file-size">${item.formattedSize}</span>`;
+                const date = new Date(item.modified).toLocaleDateString('es-ES', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+
+                return `
+                    <div class="file-item ${item.isDirectory ? 'directory' : 'file'}" 
+                         data-path="${item.path}" 
+                         data-is-directory="${item.isDirectory}">
+                        <div class="file-icon">
+                            <i class="${icon}"></i>
+                        </div>
+                        <div class="file-info">
+                            <div class="file-name" title="${item.name}">${item.name}</div>
+                            <div class="file-meta">
+                                ${sizeInfo}
+                                <span class="file-date">${date}</span>
+                            </div>
+                        </div>
+                        <div class="file-actions">
+                            ${!item.isDirectory ? `<button class="btn btn-primary btn-sm" onclick="fileBrowser.downloadFile('${item.path}')">
+                                <i class="fas fa-download"></i> ${this.t('download')}
+                            </button>` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+
+            getFileIcon(item) {
+                if (item.isDirectory) {
+                    return 'fas fa-folder';
+                }
+                
+                const ext = item.name.split('.').pop().toLowerCase();
+                const iconMap = {
+                    // Imágenes
+                    'jpg': 'fas fa-image', 'jpeg': 'fas fa-image', 'png': 'fas fa-image', 
+                    'gif': 'fas fa-image', 'bmp': 'fas fa-image', 'svg': 'fas fa-image',
+                    // Videos
+                    'mp4': 'fas fa-video', 'avi': 'fas fa-video', 'mkv': 'fas fa-video', 
+                    'mov': 'fas fa-video', 'wmv': 'fas fa-video', 'flv': 'fas fa-video',
+                    // Audio
+                    'mp3': 'fas fa-music', 'wav': 'fas fa-music', 'flac': 'fas fa-music', 
+                    'ogg': 'fas fa-music', 'aac': 'fas fa-music',
+                    // Documentos
+                    'pdf': 'fas fa-file-pdf', 'doc': 'fas fa-file-word', 'docx': 'fas fa-file-word',
+                    'xls': 'fas fa-file-excel', 'xlsx': 'fas fa-file-excel',
+                    'ppt': 'fas fa-file-powerpoint', 'pptx': 'fas fa-file-powerpoint',
+                    'txt': 'fas fa-file-text',
+                    // Archivos comprimidos
+                    'zip': 'fas fa-file-archive', 'rar': 'fas fa-file-archive', 
+                    '7z': 'fas fa-file-archive', 'tar': 'fas fa-file-archive',
+                    // Código
+                    'js': 'fas fa-file-code', 'html': 'fas fa-file-code', 'css': 'fas fa-file-code',
+                    'py': 'fas fa-file-code', 'java': 'fas fa-file-code', 'cpp': 'fas fa-file-code',
+                    // Otros
+                    'iso': 'fas fa-compact-disc', 'exe': 'fas fa-cog'
+                };
+                
+                return iconMap[ext] || 'fas fa-file';
+            }
+
+            updateBreadcrumb() {
+                const breadcrumb = document.getElementById('breadcrumb');
+                const pathParts = this.currentPath ? this.currentPath.split('/').filter(p => p) : [];
+                
+                let html = `<span class="breadcrumb-item" onclick="fileBrowser.loadDirectory('')"><i class="fas fa-home"></i> ${this.t('home')}</span>`;
+                
+                let currentPath = '';
+                pathParts.forEach((part, index) => {
+                    currentPath += '/' + part;
+                    const isLast = index === pathParts.length - 1;
+                    html += `<span class="breadcrumb-separator">/</span>`;
+                    html += `<span class="breadcrumb-item ${isLast ? 'active' : ''}" ${!isLast ? `onclick="fileBrowser.loadDirectory('${currentPath}')"` : ''}>${part}</span>`;
+                });
+                
+                breadcrumb.innerHTML = html;
+            }
+
+            updateBackButton(parentPath) {
+                const backBtn = document.getElementById('backBtn');
+                backBtn.disabled = parentPath === null;
+                backBtn.onclick = () => this.loadDirectory(parentPath || '');
+            }
+
+            goBack() {
+                const backBtn = document.getElementById('backBtn');
+                if (!backBtn.disabled) {
+                    backBtn.click();
+                }
+            }
+
+            refresh() {
+                this.loadDirectory(this.currentPath);
+            }
+
+            filterFiles(searchTerm) {
+                const filteredItems = this.currentItems.filter(item =>
+                    item.name.toLowerCase().includes(searchTerm.toLowerCase())
+                );
+                this.renderFileList(filteredItems);
+            }
+
+            downloadFile(filePath) {
+                window.open(`/download${filePath}`, '_blank');
+            }
+
+            showLoading(show) {
+                document.getElementById('loading').style.display = show ? 'flex' : 'none';
+                document.getElementById('fileBrowser').style.display = show ? 'none' : 'block';
+            }
+
+            showError(message) {
+                document.getElementById('fileList').innerHTML = `
+                    <div class="error-message">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>${message}</p>
+                    </div>
+                `;
+            }
+
+            handleApiError(error, defaultMessage) {
+                if (error.status === 401) {
+                    window.location.href = '/login';
+                    return;
+                }
+                
+                this.showError(error.message || this.t(defaultMessage) || defaultMessage);
+            }
+        }
+
+        // Global functions for UI interactions
+        function toggleUserMenu() {
+            const dropdown = document.getElementById('userDropdown');
+            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+        }
+
+        async function logout() {
+            try {
+                const response = await fetch('/api/auth/logout', { method: 'POST' });
+                const result = await response.json();
+                
+                if (result.success) {
+                    window.location.href = '/login';
+                } else {
+                    alert('Logout failed');
+                }
+            } catch (error) {
+                console.error('Logout error:', error);
+                alert('Logout failed');
+            }
+        }
+
+        async function changeLanguage(language) {
+            try {
+                const response = await fetch('/api/language', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ language })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    fileBrowser.translations = result.translations;
+                    fileBrowser.currentLanguage = language;
+                    fileBrowser.updateUI();
+                    fileBrowser.renderFileList(fileBrowser.currentItems); // Re-render to update text
+                } else {
+                    console.error('Language change failed:', result.message);
+                }
+            } catch (error) {
+                console.error('Language change error:', error);
+            }
+        }
+
+        // Close user menu when clicking outside
+        document.addEventListener('click', (event) => {
+            const userMenu = document.querySelector('.user-dropdown');
+            const dropdown = document.getElementById('userDropdown');
+            
+            if (!userMenu.contains(event.target)) {
+                dropdown.style.display = 'none';
+            }
+        });
+
+        // Event listener para doble clic en archivos/carpetas
+        document.addEventListener('click', (e) => {
+            const fileItem = e.target.closest('.file-item');
+            if (fileItem && !e.target.closest('.file-actions')) {
+                const path = fileItem.dataset.path;
+                const isDirectory = fileItem.dataset.isDirectory === 'true';
+                
+                if (isDirectory) {
+                    fileBrowser.loadDirectory(path);
+                }
+            }
+        });
+
+        // Inicializar el navegador de archivos
+        const fileBrowser = new FileBrowser();
+    </script>
+</body>
+</html>
